@@ -48,6 +48,8 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
   };
   const type = getBlobType(blob);
   if (type) checkHeaders["X-Content-Type"] = type;
+  const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
+  if (auth) checkHeaders["Authorization"] = encodeAuthorizationHeader(auth);
 
   // check upload with HEAD /upload
   let firstTry = await fetch(url, {
@@ -66,7 +68,6 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
   // handle auth and payment
   switch (firstTry.status) {
     case 401: {
-      const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
       if (!auth) throw new Error("Missing auth handler");
 
       // Try upload with auth
