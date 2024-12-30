@@ -40,6 +40,8 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
   const headers: Record<string, string> = {
     "X-SHA-256": sha256,
   };
+  const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
+  if (auth) headers["Authorization"] = encodeAuthorizationHeader(auth);
 
   // build check headers
   const checkHeaders: Record<string, string> = {
@@ -56,26 +58,14 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
     headers: checkHeaders,
   });
 
-  let upload: Response | undefined = undefined;
-
-  if (firstTry.status === 404) {
-    // BUD-06 HEAD endpoint is not supported. attempt to upload
-    upload = firstTry = await fetch(url, { body: blob, method: "PUT", signal: opts?.signal });
-  }
-
   // handle auth and payment
   switch (firstTry.status) {
     case 401: {
-      const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
-      if (!auth) throw new Error("Missing auth handler");
-
-      // Try upload with auth
-      upload = await fetch(url, {
-        signal: opts?.signal,
-        method: "PUT",
-        body: blob,
-        headers: { ...headers, Authorization: encodeAuthorizationHeader(auth) },
-      });
+      if (!auth) {
+          throw new Error("Missing auth handler");
+      } else {
+          throw new Error("Unable to authenticate");
+      }
       break;
     }
     case 402: {
@@ -85,28 +75,22 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
 
       const token = await opts.onPayment(server, sha256, blob, request);
       const payment = getEncodedToken(token);
-
-      // Try upload with payment
-      upload = await fetch(url, {
-        signal: opts?.signal,
-        method: "PUT",
-        body: blob,
-        headers: { ...headers, "X-Cashu": payment },
-      });
+      headers['X-Cashu'] = payment;
       break;
+    }
+    case 403: {
+        throw new Error("Unauthorized");
+        break;
     }
   }
 
-  if (firstTry.status >= 500) throw new Error("Server error");
-
   // check passed, upload
-  if (!upload)
-    upload = await fetch(url, {
-      signal: opts?.signal,
-      method: "PUT",
-      body: blob,
-      headers: { ...headers },
-    });
+  const upload = await fetch(url, {
+    signal: opts?.signal,
+    method: "PUT",
+    body: blob,
+    headers: { ...headers },
+  });
 
   // handle errors
   await HTTPError.handleErrorResponse(upload);
