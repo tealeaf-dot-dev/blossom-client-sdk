@@ -41,6 +41,9 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
     "X-SHA-256": sha256,
   };
 
+  const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
+  if (auth) headers["Authorization"] = encodeAuthorizationHeader(auth);
+
   // build check headers
   const checkHeaders: Record<string, string> = {
     ...headers,
@@ -48,8 +51,6 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
   };
   const type = getBlobType(blob);
   if (type) checkHeaders["X-Content-Type"] = type;
-  const auth = opts?.auth || (await opts?.onAuth?.(server, sha256, blob));
-  if (auth) checkHeaders["Authorization"] = encodeAuthorizationHeader(auth);
 
   // check upload with HEAD /upload
   let firstTry = await fetch(url, {
@@ -65,18 +66,16 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
     upload = firstTry = await fetch(url, { body: blob, method: "PUT", signal: opts?.signal });
   }
 
+  if (firstTry.status >= 500) throw new Error("Server error");
+
   // handle auth and payment
   switch (firstTry.status) {
     case 401: {
-      if (!auth) throw new Error("Missing auth handler");
-
-      // Try upload with auth
-      upload = await fetch(url, {
-        signal: opts?.signal,
-        method: "PUT",
-        body: blob,
-        headers: { ...headers, Authorization: encodeAuthorizationHeader(auth) },
-      });
+      if (!auth) {
+          throw new Error("Missing auth handler");
+      } else {
+          throw new Error("Unable to authenticate");
+      }
       break;
     }
     case 402: {
@@ -96,9 +95,11 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
       });
       break;
     }
+    case 403: {
+        throw new Error("Unauthorized");
+        break;
+    }
   }
-
-  if (firstTry.status >= 500) throw new Error("Server error");
 
   // check passed, upload
   if (!upload)
