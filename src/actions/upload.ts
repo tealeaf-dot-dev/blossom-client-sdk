@@ -63,7 +63,7 @@ export async function uploadBlob<S extends ServerType, B extends UploadType>(
 
   if (firstTry.status === 404) {
     // BUD-06 HEAD endpoint is not supported. attempt to upload
-    upload = firstTry = await fetch(url, { body: blob, method: "PUT", signal: opts?.signal });
+    upload = firstTry = await fetch(url, { body: blob, method: "PUT", signal: opts?.signal, headers });
   }
 
   if (firstTry.status >= 500) throw new Error("Server error");
